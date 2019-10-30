@@ -5,13 +5,19 @@ BBX_DIR:=/home/dcnh/MyGithub/busybox-1.26.2
 RFS_IMG:=${BBX_DIR}/rootfs.img
 RFS_DIR:=_install
 
+TEST_DIR:=/home/dcnh/MyGithub/kern_test_bin
+TEST_BIN:=${TEST_DIR}/test
+
 NETIP_PREFIX:=172.30.0
 TAP0:=tap_0
 BR0:=br_0
 
 TMP_DIR:=${shell mktemp -d}
 
-${RFS_IMG}:
+${TEST_BIN}: ${TEST_DIR}/Makefile
+	make -C ${TEST_DIR}
+
+${RFS_IMG}: ${TEST_BIN}
 	make -C ${BBX_DIR} defconfig
 	cd ${BBX_DIR}; sed -i -e '/CONFIG_PREFIX=/d' -e '/CONFIG_STATIC=/d' -e '$$ a CONFIG_PREFIX="./${RFS_DIR}"' -e '$$ a CONFIG_STATIC=y' ${BBX_DIR}/.config
 	make -C ${BBX_DIR} install
@@ -20,6 +26,7 @@ ${RFS_IMG}:
 	printf "#!/bin/sh\nip addr add ${NETIP_PREFIX}.10/24 dev eth0;\nip link set eth0 up;\nip route add default via ${NETIP_PREFIX}.1 dev eth0" > ${BBX_DIR}/${RFS_DIR}/setup_net.sh 
 	chmod +x ${BBX_DIR}/${RFS_DIR}/etc/init.d/rcS
 	chmod +x ${BBX_DIR}/${RFS_DIR}/setup_net.sh
+	cp ${TEST_BIN} ${BBX_DIR}/${RFS_DIR}/hello
 	cd ${BBX_DIR}/${RFS_DIR}; find . | cpio -o --format=newc > /$@
 
 ${KRN_IMG}:
@@ -31,12 +38,15 @@ ${KRN_IMG}:
 
 boot: ${KRN_IMG} ${RFS_IMG} ${TAP0}
 	qemu-system-x86_64 \
+		-smp 8 -numa node,nodeid=0 -numa node,nodeid=1 \
 		-nographic \
+		-smp 4 \
 		-kernel ${KRN_IMG} \
 		-initrd ${RFS_IMG} \
-		-append 'root=/dev/ram rdinit=/sbin/init console=ttyS0 nokaslr' \
+		-append 'root=/dev/ram rdinit=/sbin/init console=ttyS0 nokaslr loglevel=8' \
 		-S -s \
-		-netdev tap,id=mynet0,ifname=${TAP0},script=no,downscript=no -device e1000,netdev=mynet0
+		-netdev tap,id=mynet0,ifname=${TAP0},script=no,downscript=no -device e1000,netdev=mynet0 \
+		-usb
 
 ${BR0}:
 	ip link | grep $@ > /dev/null || { sudo ip link add $@ type bridge; sudo ip addr add ${NETIP_PREFIX}.1/24 dev $@; }
