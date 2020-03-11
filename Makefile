@@ -21,18 +21,23 @@ ${RFS_IMG}: ${TEST_BIN}
 	make -C ${BBX_DIR} defconfig
 	cd ${BBX_DIR}; sed -i -e '/CONFIG_PREFIX=/d' -e '/CONFIG_STATIC=/d' -e '$$ a CONFIG_PREFIX="./${RFS_DIR}"' -e '$$ a CONFIG_STATIC=y' ${BBX_DIR}/.config
 	make -C ${BBX_DIR} install
-	cd ${BBX_DIR}/${RFS_DIR}; mkdir -p proc sys dev etc etc/init.d
+	cd ${BBX_DIR}/${RFS_DIR}; mkdir -p proc sys dev etc etc/init.d mnt lib/modules/5.1.0-rc5+
 	printf "#!/bin/sh\nmount -t proc none /proc\nmount -t sysfs none /sys\n/sbin/mdev -s" > ${BBX_DIR}/${RFS_DIR}/etc/init.d/rcS
-	printf "#!/bin/sh\nip addr add ${NETIP_PREFIX}.10/24 dev eth0;\nip link set eth0 up;\nip route add default via ${NETIP_PREFIX}.1 dev eth0" > ${BBX_DIR}/${RFS_DIR}/setup_net.sh 
+	printf "#!/bin/sh\nip addr add ${NETIP_PREFIX}.10/24 dev \$$1;\nip link set \$$1 up;\nip route add default via ${NETIP_PREFIX}.1 dev \$$1" > ${BBX_DIR}/${RFS_DIR}/setup_static_net.sh 
+	printf "#!/bin/sh\nip link set \$$1 up;\nudhcpc -i \$$1 -s /etc/udhcp/simple.script" > ${BBX_DIR}/${RFS_DIR}/setup_dhcp_net.sh
+	printf "#!/bin/sh\nmount -t cifs //10.0.2.4/qemu /mnt -o username=guest" > ${BBX_DIR}/${RFS_DIR}/mount_smb.sh
 	chmod +x ${BBX_DIR}/${RFS_DIR}/etc/init.d/rcS
-	chmod +x ${BBX_DIR}/${RFS_DIR}/setup_net.sh
+	chmod +x ${BBX_DIR}/${RFS_DIR}/*.sh
+	# chmod +x ${BBX_DIR}/${RFS_DIR}/setup_dhcp_net.sh
 	cp ${TEST_BIN} ${BBX_DIR}/${RFS_DIR}/hello
+	cp -r ${BBX_DIR}/examples/udhcp ${BBX_DIR}/${RFS_DIR}/etc
+	cp ${BBX_DIR}/external_bin/* ${BBX_DIR}/${RFS_DIR}/bin
 	cd ${BBX_DIR}/${RFS_DIR}; find . | cpio -o --format=newc > /$@
 
 ${KRN_IMG}:
 	make -C ${KRN_DIR} mrproper
 	make -C ${KRN_DIR} x86_64_defconfig
-	printf "CONFIG_DEBUG_INFO=y\nCONFIG_DEBUG_KERNEL=y\nCONFIG_GDB_SCRIPTS=y" > "${TMP_DIR}/.config-fragment"
+	printf "CONFIG_DEBUG_INFO=y\nCONFIG_DEBUG_KERNEL=y\nCONFIG_GDB_SCRIPTS=y\nCONFIG_CIFS=y" > "${TMP_DIR}/.config-fragment"
 	cd ${KRN_DIR} && scripts/kconfig/merge_config.sh .config "${TMP_DIR}/.config-fragment"
 	make -C ${KRN_DIR} -j$$((($$(nproc)+1)/2))
 
@@ -46,7 +51,8 @@ boot: ${KRN_IMG} ${RFS_IMG} ${TAP0}
 		-append 'root=/dev/ram rdinit=/sbin/init console=ttyS0 nokaslr loglevel=8' \
 		-S -s \
 		-netdev tap,id=mynet0,ifname=${TAP0},script=no,downscript=no -device e1000,netdev=mynet0 \
-		-usb
+		-usb \
+		-net nic -net user,smb=${PWD}/./ldd
 
 ${BR0}:
 	ip link | grep $@ > /dev/null || { sudo ip link add $@ type bridge; sudo ip addr add ${NETIP_PREFIX}.1/24 dev $@; }
